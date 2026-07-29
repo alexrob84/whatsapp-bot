@@ -8,14 +8,16 @@ app.use(express.json());
 
 let sock;
 let qrCodeData = '';
-let connectionStatus = 'Desconectado / Esperando QR';
+let connectionStatus = 'Iniciando conexión...';
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     
     sock = makeWASocket({
         logger: pino({ level: 'silent' }),
-        auth: state
+        auth: state,
+        printQRInTerminal: false,
+        browser: ['Ubuntu', 'Chrome', '20.0.04']
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -24,27 +26,30 @@ async function connectToWhatsApp() {
         if (qr) {
             qrCodeData = qr;
             connectionStatus = 'Escanea el código QR';
-            // También lo imprime en los logs de Render por si acaso
-            console.log('Nuevo QR generado. Escanéalo en la web.');
+            console.log('QR generado correctamente.');
         }
         
         if (connection === 'close') {
-            connectionStatus = 'Conexión cerrada. Reconectando...';
-            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            console.log(`Conexión cerrada. Código: ${statusCode}`);
+            
+            if (statusCode !== DisconnectReason.loggedOut) {
+                connectionStatus = 'Reconectando con WhatsApp...';
                 setTimeout(connectToWhatsApp, 5000);
+            } else {
+                connectionStatus = 'Sesión cerrada por el usuario. Vuelve a escanear el QR.';
+                qrCodeData = '';
             }
         } else if (connection === 'open') {
             connectionStatus = '¡Bot conectado y activo!';
             qrCodeData = '';
-            console.log('¡Conectado exitosamente a WhatsApp!');
+            console.log('¡Conectado exitosamente!');
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
 }
 
-// Endpoint para enviar mensajes desde tu servidor Lightsail
 app.post('/enviar-mensaje', async (req, res) => {
     const { numero, mensaje } = req.body;
     try {
@@ -57,7 +62,6 @@ app.post('/enviar-mensaje', async (req, res) => {
     }
 });
 
-// Página web principal que muestra el QR visualmente para escanear
 app.get('/', async (req, res) => {
     if (qrCodeData) {
         try {
@@ -65,12 +69,12 @@ app.get('/', async (req, res) => {
             res.send(`
                 <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
                     <h2>Escanea este código QR con tu WhatsApp</h2>
-                    <img src="${urlQrImg}" alt="Código QR WhatsApp" style="width:300px; height:300px;"/>
-                    <p>Actualiza la página si el código expira.</p>
+                    <img src="${urlQrImg}" alt="Código QR" style="width:300px; height:300px;"/>
+                    <p>Si no se conecta, actualiza la página en unos segundos.</p>
                 </div>
             `);
         } catch (err) {
-            res.send('Error generando la imagen del QR');
+            res.send('Error generando el QR visual');
         }
     } else {
         res.send(`
@@ -83,6 +87,6 @@ app.get('/', async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Servidor corriendo en puerto ${PORT}`);
+    console.log(`Servidor en puerto ${PORT}`);
     connectToWhatsApp();
 });
